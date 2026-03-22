@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-body text-gray-800 antialiased;
+  }
+  
+  * {
+    @apply border-gray-200;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 bg-brand-red text-white font-semibold rounded-xl
+           hover:bg-brand-red-dark active:scale-[0.98] transition-all duration-200
+           disabled:bg-gray-300 disabled:cursor-not-allowed disabled:text-gray-500
+           focus:outline-none focus:ring-4 focus:ring-brand-red/20;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-gray-700 font-medium rounded-xl
+           border border-gray-200 hover:border-gray-300 hover:bg-gray-50
+           active:scale-[0.98] transition-all duration-200
+           focus:outline-none focus:ring-4 focus:ring-gray-200/50;
+  }
+
+  .btn-dark {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 bg-gray-900 text-white font-semibold rounded-xl
+           hover:bg-gray-800 active:scale-[0.98] transition-all duration-200
+           disabled:bg-gray-600 disabled:cursor-not-allowed
+           focus:outline-none focus:ring-4 focus:ring-gray-900/20;
+  }
+
+  .card {
+    @apply bg-white rounded-2xl border border-gray-100 shadow-sm p-6;
+  }
+
+  .card-hover {
+    @apply card hover:shadow-lg hover:border-gray-200 transition-all duration-300 cursor-pointer;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-gray-800
+           placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-red/20 focus:border-brand-red
+           transition-all duration-200;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-red {
+    @apply badge bg-red-50 text-red-700;
+  }
+
+  .badge-blue {
+    @apply badge bg-blue-50 text-blue-700;
+  }
+
+  .section-title {
+    @apply text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d1d1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b0b0b0;
+}
+
+/* Avatar Platform dark scrollbar */
+.dark-scroll::-webkit-scrollbar-thumb {
+  background: #444;
+}
+
+/* Loading spinner */
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+.animate-spin-slow {
+  animation: spin-slow 2s linear infinite;
+}
