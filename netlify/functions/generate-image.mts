@@ -1,7 +1,7 @@
 // ============================================================
 // Netlify Function: generate-image
-// Proxy sécurisé vers Gemini Nano Banana (image generation)
-// Modèle : gemini-2.0-flash-exp avec responseModalities IMAGE
+// Proxy sécurisé vers Gemini Nano Banana 2 (image generation)
+// Modèle : gemini-3.1-flash-image-preview
 // ============================================================
 
 export default async (request: Request) => {
@@ -37,18 +37,18 @@ export default async (request: Request) => {
 
     parts.push({ text: prompt });
 
-    // Use gemini-2.0-flash-exp with IMAGE responseModality
-    const model = 'gemini-2.0-flash-exp';
+    // Nano Banana 2 = gemini-3.1-flash-image-preview
+    const model = 'gemini-3.1-flash-image-preview';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     const requestBody: any = {
       contents: [{ parts }],
       generationConfig: {
-        responseModalities: ['TEXT', 'IMAGE'],
+        responseModalities: ['IMAGE', 'TEXT'],
       },
     };
 
-    console.log(`[generate-image] Calling ${model} with prompt length: ${prompt.length}`);
+    console.log(`[generate-image] Calling ${model}`);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -59,7 +59,7 @@ export default async (request: Request) => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`[generate-image] API Error ${response.status}:`, errorText);
-      
+
       let errorMsg = `Erreur API Google: ${response.status}`;
       try {
         const errorJson = JSON.parse(errorText);
@@ -67,7 +67,7 @@ export default async (request: Request) => {
           errorMsg = errorJson.error.message;
         }
       } catch {}
-      
+
       return Response.json({ error: errorMsg }, { status: response.status });
     }
 
@@ -96,7 +96,7 @@ export default async (request: Request) => {
     const textResponse = candidate.content.parts.map((p: any) => p.text).filter(Boolean).join(' ');
     console.error('[generate-image] Only text returned:', textResponse.substring(0, 200));
     return Response.json(
-      { error: `Le modèle n'a pas généré d'image. Réponse texte: ${textResponse.substring(0, 200)}` },
+      { error: `Le modèle n'a pas généré d'image. Réponse: ${textResponse.substring(0, 200)}` },
       { status: 500 },
     );
   } catch (error: any) {
