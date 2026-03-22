@@ -1,11 +1,10 @@
 // ============================================================
 // Netlify Function: generate-image
-// Proxy sécurisé vers Google Imagen 3 (Nano/Banana)
-// La clé API Google est côté serveur uniquement
+// Proxy sécurisé vers Gemini Nano Banana (image generation)
+// Modèle : gemini-2.0-flash-exp avec responseModalities IMAGE
 // ============================================================
 
 export default async (request: Request) => {
-  // CORS
   if (request.method === 'OPTIONS') {
     return new Response('', {
       headers: {
@@ -24,16 +23,6 @@ export default async (request: Request) => {
       return Response.json({ error: 'Clé API Google non configurée sur le serveur.' }, { status: 500 });
     }
 
-    // Map ratio to Imagen 3 supported ratios
-    const ratioMap: Record<string, string> = {
-      '1:1': '1:1',
-      '4:5': '3:4',
-      '9:16': '9:16',
-      '16:9': '16:9',
-      '3:2': '4:3',
-    };
-    const aspectRatio = ratioMap[ratio] || '1:1';
-
     // Build request parts
     const parts: any[] = [];
 
@@ -48,43 +37,55 @@ export default async (request: Request) => {
 
     parts.push({ text: prompt });
 
-    // Call Gemini API with image generation
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: {
-            responseModalities: ['IMAGE', 'TEXT'],
-            imageMimeType: 'image/png',
-          },
-        }),
+    // Use gemini-2.0-flash-exp with IMAGE responseModality
+    const model = 'gemini-2.0-flash-exp';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    const requestBody: any = {
+      contents: [{ parts }],
+      generationConfig: {
+        responseModalities: ['TEXT', 'IMAGE'],
       },
-    );
+    };
+
+    console.log(`[generate-image] Calling ${model} with prompt length: ${prompt.length}`);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Google API Error:', errorText);
-      return Response.json(
-        { error: `Erreur API Google: ${response.status}` },
-        { status: response.status },
-      );
+      console.error(`[generate-image] API Error ${response.status}:`, errorText);
+      
+      let errorMsg = `Erreur API Google: ${response.status}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.error?.message) {
+          errorMsg = errorJson.error.message;
+        }
+      } catch {}
+      
+      return Response.json({ error: errorMsg }, { status: response.status });
     }
 
     const data = await response.json();
     const candidate = data.candidates?.[0];
 
     if (!candidate?.content?.parts) {
+      const blockReason = data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || 'unknown';
+      console.error('[generate-image] No content. Reason:', blockReason);
       return Response.json(
-        { error: "Aucune image n'a été générée (réponse vide ou bloquée)." },
+        { error: `Aucune image générée. Raison: ${blockReason}. Essayez un prompt différent.` },
         { status: 500 },
       );
     }
 
     for (const part of candidate.content.parts) {
       if (part.inlineData) {
+        console.log('[generate-image] Image generated successfully');
         return Response.json({
           imageBase64: part.inlineData.data,
           mimeType: part.inlineData.mimeType || 'image/png',
@@ -92,12 +93,14 @@ export default async (request: Request) => {
       }
     }
 
+    const textResponse = candidate.content.parts.map((p: any) => p.text).filter(Boolean).join(' ');
+    console.error('[generate-image] Only text returned:', textResponse.substring(0, 200));
     return Response.json(
-      { error: "Aucune image dans la réponse du modèle." },
+      { error: `Le modèle n'a pas généré d'image. Réponse texte: ${textResponse.substring(0, 200)}` },
       { status: 500 },
     );
   } catch (error: any) {
-    console.error('generate-image error:', error);
+    console.error('[generate-image] Error:', error);
     return Response.json(
       { error: error.message || 'Erreur interne du serveur.' },
       { status: 500 },
