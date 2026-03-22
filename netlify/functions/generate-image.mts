@@ -110,4 +110,5 @@ export default async (request: Request) => {
 
 export const config = {
   path: '/.netlify/functions/generate-image',
+  method: 'POST',
 };

@@ -87,6 +87,7 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
       const finalImages: GeneratedImage[] = [];
       const totalSteps = generationState.outputPack.length;
       let currentStep = 1;
+      let lastError: string | null = null;
 
       for (const packId of generationState.outputPack) {
         const spec = OUTPUT_SPECS[packId];
@@ -102,19 +103,36 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
         if (apiRatio === '4:5') apiRatio = '3:4';
         if (apiRatio === '3:2') apiRatio = '4:3';
 
-        const result = await generateImage(prompt, apiRatio);
+        try {
+          const result = await generateImage(prompt, apiRatio);
 
-        finalImages.push({
-          id: packId,
-          url: `data:image/png;base64,${result.imageBase64}`,
-          history: [],
-          label,
-          spec,
-          overlays: deepCloneOverlays(generationState.overlays),
-        });
+          finalImages.push({
+            id: packId,
+            url: `data:image/png;base64,${result.imageBase64}`,
+            history: [],
+            label,
+            spec,
+            overlays: deepCloneOverlays(generationState.overlays),
+          });
 
-        setGeneratedImages([...finalImages]);
+          setGeneratedImages([...finalImages]);
+        } catch (formatError: any) {
+          console.warn(`Format ${label} failed:`, formatError.message);
+          lastError = `Format "${label}" échoué: ${formatError.message}`;
+        }
+
         currentStep++;
+
+        // Pause entre les requêtes pour éviter le rate limiting
+        if (currentStep <= totalSteps) {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      if (finalImages.length === 0 && lastError) {
+        setError(lastError);
+      } else if (lastError && finalImages.length > 0) {
+        setError(`${finalImages.length}/${totalSteps} images générées. ${lastError}`);
       }
     } catch (e: any) {
       console.error(e);
