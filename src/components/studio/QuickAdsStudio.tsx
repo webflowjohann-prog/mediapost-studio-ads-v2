@@ -101,8 +101,15 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
         if (apiRatio === '4:5') apiRatio = '3:4';
         if (apiRatio === '3:2') apiRatio = '4:3';
 
+        // Extract product image base64 if available (for visual reference)
+        let referenceImageBase64: string | undefined;
+        const productImageUrl = generationState.productChoice.custom.image_url;
+        if (productImageUrl && productImageUrl.startsWith('data:')) {
+          referenceImageBase64 = productImageUrl.split(',')[1];
+        }
+
         try {
-          const result = await generateImage(prompt, apiRatio);
+          const result = await generateImage(prompt, apiRatio, referenceImageBase64);
           finalImages.push({
             id: packId,
             url: `data:image/png;base64,${result.imageBase64}`,
@@ -241,6 +248,11 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
               progressMessage={progressMessage}
               onEditImage={handleEditImage}
               onGenerateVideo={handleGenerateVideo}
+              onImageOverlaysChange={(imageId, overlays) => {
+                setGeneratedImages((prev) =>
+                  prev.map((img) => (img.id === imageId ? { ...img, overlays } : img)),
+                );
+              }}
             />
           </div>
         </div>

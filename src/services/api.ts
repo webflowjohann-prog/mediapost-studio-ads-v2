@@ -29,56 +29,36 @@ async function callFunction<T>(name: string, body: Record<string, unknown>): Pro
 // --- Prompt Builders (client-side, no secret needed) ---
 
 export function buildImagePrompt(state: FormState, spec: OutputSpec): string {
-  const { productChoice, stylePreset, contextMode, contextPromptFreeform, customScenePrompt } = state;
+  const { productChoice, customScenePrompt } = state;
 
-  const selectedProducts = productChoice.preset_product_ids
-    .map(id => PRODUCTS.find(p => p.id === id))
-    .filter(Boolean);
+  // Build product context from custom fields
+  const productName = productChoice.custom.name || 'Produit';
+  const productDescription = productChoice.custom.description || '';
+  const hasProductImage = !!productChoice.custom.image_url;
 
-  if (productChoice.preset_product_ids.includes('CUSTOM') && state.productChoice.custom.name) {
-    selectedProducts.push({
-      id: 'CUSTOM',
-      label: state.productChoice.custom.name,
-      category: 'autre',
-      image_url: state.productChoice.custom.image_url,
-    });
-  }
-
-  const productNames = selectedProducts.map(p => p!.label).join(', ');
-  const style = STYLE_PRESETS[stylePreset].details;
-  const context = contextMode === 'FREEFORM' ? contextPromptFreeform : CONTEXT_MODES[contextMode].template;
-
-  let finalSurface = style.surface;
-  let customSceneInstruction = '';
-
-  if (customScenePrompt) {
-    finalSurface = `SCÈNE DÉFINIE PAR L'UTILISATEUR : ${customScenePrompt}`;
-    customSceneInstruction = `IMPERATIVE: USER SCENE OVERRIDE. The environment MUST match this description strictly: "${customScenePrompt}".`;
-  }
+  const scenePrompt = customScenePrompt || 'A clean, professional marketing setting with natural lighting.';
 
   return `
-    **ROLE:** Expert Food & Product Photographer for ${BRAND.tagline}.
-    **TASK:** Create a photorealistic marketing image for a local marketing campaign containing: ${productNames}.
+    **ROLE:** Expert Product & Advertising Photographer for local marketing campaigns ("${BRAND.tagline}").
+    
+    **TASK:** Create a photorealistic marketing image featuring: ${productName}.
+    ${productDescription ? `**PRODUCT CONTEXT:** ${productDescription}` : ''}
+    
+    ${hasProductImage ? `**CRITICAL - REFERENCE IMAGE:** An image of the actual product is provided as input. The product in the generated image MUST look EXACTLY like the reference image. Same packaging, same colors, same labels, same shape. Do NOT invent a different product. Reproduce the product faithfully in the scene.` : ''}
+    
+    **SCENE:** ${scenePrompt}
     
     **STRICT VISUAL RULES:**
-    1. **REALISTIC SCALE:** The product MUST be life-sized. DO NOT make it giant.
-    2. **TEXTURES:** All textures must be hyperrealistic and appetizing.
-    3. **COMPOSITION:** The product is the hero, placed naturally on: ${finalSurface}.
+    1. The product MUST be life-sized and realistic. DO NOT make it giant or distorted.
+    2. All textures must be hyperrealistic, appetizing, and photographic quality.
+    3. The product is the hero of the composition, clearly visible and well-lit.
+    4. DO NOT add any text, logo, watermark, or overlay on the image. The image must be clean.
+    5. NO AI artifacts, NO glitches, NO distorted text.
     
-    **STYLE (${stylePreset}):**
-    - Camera: ${style.camera}
-    - Light: ${style.light}
-    - Color Grade: ${style.grade}
-    
-    **CONTEXT:** ${context}
-    ${customSceneInstruction}
-    
-    **BRANDING:**
-    - Colors: ${BRAND.color_palette.primary}, ${BRAND.color_palette.secondary.join(', ')}.
-    - Vibe: ${BRAND.tokens.slice(0, 3).join(', ')}.
-    - NO AI TEXT. NO GLITCHES.
-    
-    **FORMAT:** ${spec.ratio} (${spec.px[0]}x${spec.px[1]}px)
+    **TECHNICAL:**
+    - Camera: Full-frame, 50mm f/2.8, professional studio lighting
+    - Color grade: Warm, inviting, commercial quality
+    - Format: ${spec.ratio} (${spec.px[0]}x${spec.px[1]}px)
   `.trim();
 }
 

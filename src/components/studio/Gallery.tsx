@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import type { GeneratedImage } from '../../types';
+import type { GeneratedImage, Overlay } from '../../types';
+import { ImageWithOverlays } from './ImageWithOverlays';
 
 interface GalleryProps {
   isLoading: boolean;
@@ -8,13 +9,15 @@ interface GalleryProps {
   progressMessage: string | null;
   onEditImage: (imageId: string, prompt: string) => Promise<void>;
   onGenerateVideo: (imageId: string, prompt: string) => Promise<void>;
+  onImageOverlaysChange: (imageId: string, overlays: Overlay[]) => void;
 }
 
 const ImageCard: React.FC<{
   img: GeneratedImage;
   onEditImage: (imageId: string, prompt: string) => Promise<void>;
   onGenerateVideo: (imageId: string, prompt: string) => Promise<void>;
-}> = ({ img, onEditImage, onGenerateVideo }) => {
+  onOverlaysChange: (overlays: Overlay[]) => void;
+}> = ({ img, onEditImage, onGenerateVideo, onOverlaysChange }) => {
   const [editPrompt, setEditPrompt] = useState('');
   const [videoPrompt, setVideoPrompt] = useState('');
   const [isEditing, setIsEditing] = useState(false);
@@ -43,11 +46,16 @@ const ImageCard: React.FC<{
 
   return (
     <div className="card p-4 animate-fade-in">
-      {/* Image */}
+      {/* Image with draggable overlays */}
       <div className="relative rounded-xl overflow-hidden mb-3 group">
-        <img src={img.url} alt={img.label} className="w-full h-auto" />
+        <ImageWithOverlays
+          imageUrl={img.url}
+          overlays={img.overlays}
+          onOverlaysChange={onOverlaysChange}
+          className="rounded-xl"
+        />
         {/* Download overlay */}
-        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
           <a
             href={img.url}
             download={`mediapost_${img.id}.png`}
@@ -164,6 +172,7 @@ export const Gallery: React.FC<GalleryProps> = ({
   progressMessage,
   onEditImage,
   onGenerateVideo,
+  onImageOverlaysChange,
 }) => {
   if (error) {
     return (
@@ -219,6 +228,7 @@ export const Gallery: React.FC<GalleryProps> = ({
             img={img}
             onEditImage={onEditImage}
             onGenerateVideo={onGenerateVideo}
+            onOverlaysChange={(overlays) => onImageOverlaysChange(img.id, overlays)}
           />
         ))}
       </div>
