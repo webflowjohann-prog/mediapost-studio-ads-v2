@@ -27,8 +27,21 @@ export default async (request: Request) => {
     if (body.type === 'slogans') {
       prompt = `Génère 5 slogans publicitaires courts pour une campagne de marketing local. Marque : "Le pouvoir de la proximité". Produits: ${body.productNames.join(', ')}. Ambiance: ${body.mood}. Style : communication de proximité, chaleureux. Réponds en JSON: un array de strings.`;
     } else if (body.type === 'scene_suggestions') {
-      const productNames = body.products.map((p: any) => p.name).join(', ');
-      prompt = `Génère 4 suggestions courtes et inspirantes de scènes de vie réalistes pour une campagne de communication de proximité mettant en avant : ${productNames}. Les scènes doivent évoquer la convivialité, le quotidien et la proximité. Réponds en JSON: un array de strings.`;
+      const productName = body.products[0]?.name || 'Produit';
+      const productContext = body.products[0]?.category || 'marketing local';
+      prompt = `Tu es directeur artistique pour une agence de communication de proximité ("Le pouvoir de la proximité").
+
+Le client te demande de créer un visuel publicitaire pour : "${productName}".
+Contexte/description du produit : "${productContext}".
+
+Génère exactement 4 propositions de SCÈNES PHOTOGRAPHIQUES réalistes et inspirantes pour mettre en valeur ce produit dans un contexte de marketing local. Chaque proposition doit :
+- Décrire une scène de vie concrète, visuelle et émotionnelle
+- Être cohérente avec le produit spécifique (pas générique)
+- Évoquer la proximité, le quotidien, la convivialité ou le local
+- Inclure des détails visuels (éclairage, décor, personnages, ambiance)
+- Faire entre 1 et 3 phrases
+
+Réponds UNIQUEMENT en JSON : un array de 4 strings. Pas de markdown, pas de commentaire.`;
     } else {
       return Response.json({ error: 'Type de requête non supporté.' }, { status: 400 });
     }
