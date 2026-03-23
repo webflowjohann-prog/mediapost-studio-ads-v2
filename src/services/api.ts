@@ -10,20 +10,37 @@ import { BRAND, CONTEXT_MODES, PRODUCTS, STYLE_PRESETS } from '../constants';
 
 const API_BASE = '/.netlify/functions';
 
-// --- Helper: Call Netlify Function ---
-async function callFunction<T>(name: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${API_BASE}/${name}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+// --- Helper: Call Netlify Function with timeout + retry ---
+async function callFunction<T>(name: string, body: Record<string, unknown>, timeoutMs = 55000): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(errorData.error || `Erreur ${res.status}: ${res.statusText}`);
+  try {
+    const res = await fetch(`${API_BASE}/${name}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (res.status === 504) {
+      throw new Error('Timeout serveur (504). Le format est peut-être trop lourd. Réessayez avec moins de formats.');
+    }
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(errorData.error || `Erreur ${res.status}: ${res.statusText}`);
+    }
+
+    return res.json();
+  } catch (e: any) {
+    if (e.name === 'AbortError') {
+      throw new Error('Timeout: la génération a pris trop de temps. Essayez avec un seul format.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return res.json();
 }
 
 // --- Prompt Builders (client-side, no secret needed) ---
@@ -31,34 +48,54 @@ async function callFunction<T>(name: string, body: Record<string, unknown>): Pro
 export function buildImagePrompt(state: FormState, spec: OutputSpec): string {
   const { productChoice, customScenePrompt } = state;
 
-  // Build product context from custom fields
   const productName = productChoice.custom.name || 'Produit';
   const productDescription = productChoice.custom.description || '';
   const hasProductImage = !!productChoice.custom.image_url;
 
-  const scenePrompt = customScenePrompt || 'A clean, professional marketing setting with natural lighting.';
+  const scenePrompt = customScenePrompt || 'Clean professional marketing setting, natural soft lighting.';
 
+  if (hasProductImage) {
+    // Prompt spécifique quand on a une image de référence du produit
+    return `
+STRICT PRODUCT PHOTOGRAPHY BRIEF.
+
+THE REFERENCE IMAGE (Image 1) shows the EXACT product: "${productName}".
+${productDescription ? `Product context: ${productDescription}.` : ''}
+
+ABSOLUTE RULES FOR THE PRODUCT:
+- REPRODUCE the product from Image 1 with 100% visual fidelity.
+- SAME exact colors, SAME packaging, SAME labels, SAME shape, SAME proportions.
+- DO NOT change the product color. If it is white, it stays white. If red, stays red.
+- DO NOT add or remove any element from the product.
+- DO NOT invent a different product. The output MUST contain the EXACT same product as Image 1.
+
+SCENE: ${scenePrompt}
+
+COMPOSITION RULES:
+- The product is the central hero, occupying 30-50% of the frame.
+- Place it naturally in the described scene.
+- Photorealistic quality, shot on full-frame camera, 50mm f/2.8, soft studio lighting.
+- NO text, NO logo, NO watermark on the image. Output a clean photograph only.
+- NO AI artifacts or distortions.
+- Format: ${spec.ratio}
+    `.trim();
+  }
+
+  // Prompt sans image de référence (text-only)
   return `
-    **ROLE:** Expert Product & Advertising Photographer for local marketing campaigns ("${BRAND.tagline}").
-    
-    **TASK:** Create a photorealistic marketing image featuring: ${productName}.
-    ${productDescription ? `**PRODUCT CONTEXT:** ${productDescription}` : ''}
-    
-    ${hasProductImage ? `**CRITICAL - REFERENCE IMAGE:** An image of the actual product is provided as input. The product in the generated image MUST look EXACTLY like the reference image. Same packaging, same colors, same labels, same shape. Do NOT invent a different product. Reproduce the product faithfully in the scene.` : ''}
-    
-    **SCENE:** ${scenePrompt}
-    
-    **STRICT VISUAL RULES:**
-    1. The product MUST be life-sized and realistic. DO NOT make it giant or distorted.
-    2. All textures must be hyperrealistic, appetizing, and photographic quality.
-    3. The product is the hero of the composition, clearly visible and well-lit.
-    4. DO NOT add any text, logo, watermark, or overlay on the image. The image must be clean.
-    5. NO AI artifacts, NO glitches, NO distorted text.
-    
-    **TECHNICAL:**
-    - Camera: Full-frame, 50mm f/2.8, professional studio lighting
-    - Color grade: Warm, inviting, commercial quality
-    - Format: ${spec.ratio} (${spec.px[0]}x${spec.px[1]}px)
+PRODUCT PHOTOGRAPHY BRIEF.
+
+Product: "${productName}".
+${productDescription ? `Context: ${productDescription}.` : ''}
+
+SCENE: ${scenePrompt}
+
+Create a photorealistic marketing photograph of this product in the described scene.
+- Product is the central hero, naturally integrated.
+- Photorealistic, shot on full-frame camera, 50mm f/2.8, soft natural lighting.
+- NO text, NO logo, NO watermark. Clean photograph only.
+- NO AI artifacts.
+- Format: ${spec.ratio}
   `.trim();
 }
 

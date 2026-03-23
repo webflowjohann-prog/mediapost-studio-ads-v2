@@ -126,7 +126,8 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
 
         currentStep++;
         if (currentStep <= totalSteps) {
-          await new Promise((r) => setTimeout(r, 2000));
+          setProgressMessage(`Pause avant le prochain format...`);
+          await new Promise((r) => setTimeout(r, 4000));
         }
       }
 
