@@ -134,7 +134,8 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
       if (finalImages.length === 0 && lastError) {
         setError(lastError);
       } else if (lastError && finalImages.length > 0) {
-        setError(`${finalImages.length}/${totalSteps} images générées. ${lastError}`);
+        // Partial success = show warning, not error
+        setError(`✅ ${finalImages.length}/${totalSteps} visuels générés. ⚠️ Format échoué : ${lastError}`);
       }
     } catch (e: any) {
       console.error(e);

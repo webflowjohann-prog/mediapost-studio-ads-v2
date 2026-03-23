@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { GeneratedImage, Overlay } from '../../types';
 import { ImageWithOverlays } from './ImageWithOverlays';
+import { OverlayPostEditor } from './OverlayPostEditor';
 
 interface GalleryProps {
   isLoading: boolean;
@@ -161,6 +162,12 @@ const ImageCard: React.FC<{
       {img.videoGenerationError && (
         <p className="mt-2 text-xs text-red-500">{img.videoGenerationError}</p>
       )}
+
+      {/* Post-production panel per image */}
+      <OverlayPostEditor
+        overlays={img.overlays}
+        onOverlaysChange={onOverlaysChange}
+      />
     </div>
   );
 };
@@ -174,7 +181,7 @@ export const Gallery: React.FC<GalleryProps> = ({
   onGenerateVideo,
   onImageOverlaysChange,
 }) => {
-  if (error) {
+  if (error && images.length === 0) {
     return (
       <div className="card border-red-200 bg-red-50">
         <p className="text-red-700 text-sm">{error}</p>
@@ -212,6 +219,13 @@ export const Gallery: React.FC<GalleryProps> = ({
 
   return (
     <div className="space-y-4">
+      {/* Partial success warning */}
+      {error && images.length > 0 && (
+        <div className="card border-amber-200 bg-amber-50 py-3">
+          <p className="text-amber-800 text-sm">{error}</p>
+        </div>
+      )}
+
       {isLoading && progressMessage && (
         <div className="card py-3">
           <p className="text-sm text-gray-600 mb-2">{progressMessage}</p>

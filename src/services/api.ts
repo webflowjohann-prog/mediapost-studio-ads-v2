@@ -10,37 +10,60 @@ import { BRAND, CONTEXT_MODES, PRODUCTS, STYLE_PRESETS } from '../constants';
 
 const API_BASE = '/.netlify/functions';
 
-// --- Helper: Call Netlify Function with timeout + retry ---
-async function callFunction<T>(name: string, body: Record<string, unknown>, timeoutMs = 55000): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+// --- Helper: Call Netlify Function with timeout + auto-retry on 504 ---
+async function callFunction<T>(name: string, body: Record<string, unknown>, timeoutMs = 55000, maxRetries = 1): Promise<T> {
+  let lastError: Error | null = null;
 
-  try {
-    const res = await fetch(`${API_BASE}/${name}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (res.status === 504) {
-      throw new Error('Timeout serveur (504). Le format est peut-être trop lourd. Réessayez avec moins de formats.');
+    try {
+      if (attempt > 0) {
+        console.log(`[callFunction] Retry ${attempt}/${maxRetries} for ${name}...`);
+        // Wait before retry to let server cool down
+        await new Promise(r => setTimeout(r, 3000));
+      }
+
+      const res = await fetch(`${API_BASE}/${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (res.status === 504) {
+        lastError = new Error(`Timeout serveur (504) sur "${name}".`);
+        if (attempt < maxRetries) {
+          console.warn(`[callFunction] 504 on ${name}, will retry...`);
+          continue;
+        }
+        throw lastError;
+      }
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(errorData.error || `Erreur ${res.status}: ${res.statusText}`);
+      }
+
+      return res.json();
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        lastError = new Error(`Timeout client sur "${name}". Essayez avec moins de formats.`);
+        if (attempt < maxRetries) continue;
+        throw lastError;
+      }
+      if (attempt < maxRetries && (e.message?.includes('504') || e.message?.includes('Timeout'))) {
+        lastError = e;
+        continue;
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeout);
     }
-
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(errorData.error || `Erreur ${res.status}: ${res.statusText}`);
-    }
-
-    return res.json();
-  } catch (e: any) {
-    if (e.name === 'AbortError') {
-      throw new Error('Timeout: la génération a pris trop de temps. Essayez avec un seul format.');
-    }
-    throw e;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw lastError || new Error('Erreur inconnue');
 }
 
 // --- Prompt Builders (client-side, no secret needed) ---
