@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Header } from './Header';
 import { ControlPanel } from './ControlPanel';
 import { Gallery } from './Gallery';
-import { generateImage, buildImagePrompt } from '../../services/api';
+import { generateImage, editImage, generateVideo, buildImagePrompt } from '../../services/api';
 import type { FormState, GeneratedImage } from '../../types';
 import { BRAND, OUTPUT_SPECS, OUTPUT_PACK_LABELS } from '../../constants';
 import { deepCloneOverlays } from '../../utils';
@@ -45,15 +45,14 @@ export interface QuickAdsStudioProps {
 export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
   const [formState, setFormState] = useState<FormState>({
     productChoice: {
-      preset_product_ids: ['flyer_promo'],
+      preset_product_ids: [],
       custom: { name: '', image_url: '', description: '' },
     },
     stylePreset: 'CORPORATE_PRO',
     contextMode: 'IN_STORE_MENU',
     contextPromptFreeform: '',
-    customScenePrompt:
-      'Un repas simple du soir, la famille est réunie autour de la table, ambiance vraie, chaleureuse, naturelle.',
-    outputPack: ['SOCIAL_SQUARE', 'POST_VERTICAL', 'STORY', 'WEB_HERO'],
+    customScenePrompt: '',
+    outputPack: ['SOCIAL_SQUARE', 'STORY'],
     overlays: defaultOverlays,
     consistencySeed: '',
   });
@@ -63,13 +62,14 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
 
+  // --- Generate all formats ---
   const handleGenerate = useCallback(async () => {
     if (formState.outputPack.length === 0) {
       setError('Veuillez sélectionner au moins un format de sortie.');
       return;
     }
-    if (formState.productChoice.preset_product_ids.length === 0) {
-      setError('Veuillez sélectionner au moins un produit.');
+    if (!formState.productChoice.custom.name && !formState.productChoice.custom.image_url) {
+      setError('Veuillez ajouter un produit (image ou nom).');
       return;
     }
 
@@ -93,19 +93,16 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
         const spec = OUTPUT_SPECS[packId];
         const label = OUTPUT_PACK_LABELS[packId];
         setProgressMessage(
-          `Étape ${currentStep}/${totalSteps} : Génération du format "${label}" (${spec.px[0]}x${spec.px[1]}px)...`,
+          `Étape ${currentStep}/${totalSteps} : "${label}" (${spec.px[0]}x${spec.px[1]})...`,
         );
 
         const prompt = buildImagePrompt(generationState, spec);
-
-        // Map ratio for API
         let apiRatio = spec.ratio;
         if (apiRatio === '4:5') apiRatio = '3:4';
         if (apiRatio === '3:2') apiRatio = '4:3';
 
         try {
           const result = await generateImage(prompt, apiRatio);
-
           finalImages.push({
             id: packId,
             url: `data:image/png;base64,${result.imageBase64}`,
@@ -114,18 +111,15 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
             spec,
             overlays: deepCloneOverlays(generationState.overlays),
           });
-
           setGeneratedImages([...finalImages]);
         } catch (formatError: any) {
           console.warn(`Format ${label} failed:`, formatError.message);
-          lastError = `Format "${label}" échoué: ${formatError.message}`;
+          lastError = `Format "${label}": ${formatError.message}`;
         }
 
         currentStep++;
-
-        // Pause entre les requêtes pour éviter le rate limiting
         if (currentStep <= totalSteps) {
-          await new Promise(r => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 2000));
         }
       }
 
@@ -136,32 +130,117 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
       }
     } catch (e: any) {
       console.error(e);
-      setError(e.message || 'Une erreur est survenue lors de la génération.');
+      setError(e.message || 'Une erreur est survenue.');
     } finally {
       setIsLoading(false);
       setProgressMessage(null);
     }
   }, [formState]);
 
+  // --- Edit a single image ---
+  const handleEditImage = useCallback(
+    async (imageId: string, prompt: string) => {
+      const original = generatedImages.find((img) => img.id === imageId);
+      if (!original) return;
+
+      const originalBase64 = original.url.split(',')[1];
+      if (!originalBase64) throw new Error("Could not extract image data.");
+
+      const result = await editImage(originalBase64, prompt);
+
+      setGeneratedImages((prev) =>
+        prev.map((img) =>
+          img.id === imageId
+            ? {
+                ...img,
+                url: `data:image/png;base64,${result.imageBase64}`,
+                history: [...img.history, img.url],
+              }
+            : img,
+        ),
+      );
+    },
+    [generatedImages],
+  );
+
+  // --- Generate video from an image ---
+  const handleGenerateVideo = useCallback(
+    async (imageId: string, prompt: string) => {
+      const image = generatedImages.find((img) => img.id === imageId);
+      if (!image) return;
+
+      setGeneratedImages((prev) =>
+        prev.map((img) =>
+          img.id === imageId ? { ...img, isVideoLoading: true, videoGenerationError: undefined } : img,
+        ),
+      );
+
+      try {
+        const imageBase64 = image.url.split(',')[1];
+        if (!imageBase64) throw new Error("Could not extract image data.");
+
+        // Animation prompt: the logo and text must stay static
+        const videoPromptWithConstraint = `${prompt}. CONSTRAINT: Any logo or text overlay on the image must remain perfectly static and not move or deform. Only the background and main subject should animate.`;
+
+        const result = await generateVideo(imageBase64, videoPromptWithConstraint, image.spec.ratio, 'fast');
+
+        // Convert base64 video to blob URL
+        const binaryString = atob(result.videoBase64 || '');
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const videoUrl = URL.createObjectURL(new Blob([bytes], { type: 'video/mp4' }));
+
+        setGeneratedImages((prev) =>
+          prev.map((img) =>
+            img.id === imageId ? { ...img, videoUrl, isVideoLoading: false } : img,
+          ),
+        );
+      } catch (e: any) {
+        setGeneratedImages((prev) =>
+          prev.map((img) =>
+            img.id === imageId
+              ? { ...img, isVideoLoading: false, videoGenerationError: `Erreur: ${e.message}` }
+              : img,
+          ),
+        );
+      }
+    },
+    [generatedImages],
+  );
+
+  // --- Apply global overlay template ---
+  const handleApplyGlobalOverlays = useCallback(() => {
+    if (generatedImages.length === 0) return;
+    setGeneratedImages((prev) =>
+      prev.map((img) => ({ ...img, overlays: deepCloneOverlays(formState.overlays) })),
+    );
+  }, [formState.overlays, generatedImages.length]);
+
   return (
     <div className="min-h-screen bg-brand-cream">
       <Header onBack={onBack} />
       <main className="p-4 md:p-6 max-w-[1600px] mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-4 xl:col-span-3">
             <ControlPanel
               formState={formState}
               setFormState={setFormState}
               onGenerate={handleGenerate}
               isLoading={isLoading}
+              hasImages={generatedImages.length > 0}
+              onApplyGlobalOverlays={handleApplyGlobalOverlays}
             />
           </div>
-          <div className="lg:col-span-9">
+          <div className="lg:col-span-8 xl:col-span-9">
             <Gallery
               isLoading={isLoading}
               error={error}
               images={generatedImages}
               progressMessage={progressMessage}
+              onEditImage={handleEditImage}
+              onGenerateVideo={handleGenerateVideo}
             />
           </div>
         </div>

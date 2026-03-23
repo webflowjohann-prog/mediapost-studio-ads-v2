@@ -117,7 +117,7 @@ export async function generateVideo(
   prompt: string,
   ratio: string,
   quality: string,
-): Promise<{ videoUrl: string }> {
+): Promise<{ videoUrl?: string; videoBase64?: string }> {
   return callFunction('generate-video', {
     imageBase64,
     prompt,

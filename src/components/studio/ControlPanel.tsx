@@ -1,16 +1,17 @@
 import React from 'react';
 import type { FormState } from '../../types';
-import { ProductSelector } from './ProductSelector';
-import { StyleSelector } from './StyleSelector';
-import { ContextSelector } from './ContextSelector';
+import { ProductUpload } from './ProductUpload';
+import { SceneBuilder } from './SceneBuilder';
 import { OutputSelector } from './OutputSelector';
-import { VoiceInput } from '../common/VoiceInput';
+import { OverlayEditor } from './OverlayEditor';
 
 interface ControlPanelProps {
   formState: FormState;
   setFormState: React.Dispatch<React.SetStateAction<FormState>>;
   onGenerate: () => void;
   isLoading: boolean;
+  hasImages: boolean;
+  onApplyGlobalOverlays: () => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -18,54 +19,39 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   setFormState,
   onGenerate,
   isLoading,
+  hasImages,
+  onApplyGlobalOverlays,
 }) => {
+  const canGenerate =
+    formState.productChoice.custom.name.trim().length > 0 ||
+    formState.productChoice.custom.image_url.length > 0;
+
   return (
     <div className="space-y-4 sticky top-16">
-      <ProductSelector formState={formState} setFormState={setFormState} />
+      {/* 1. Product */}
+      <ProductUpload formState={formState} setFormState={setFormState} />
 
-      <StyleSelector
-        value={formState.stylePreset}
-        onChange={(v) => setFormState((s) => ({ ...s, stylePreset: v }))}
-      />
+      {/* 2. Scene */}
+      <SceneBuilder formState={formState} setFormState={setFormState} />
 
-      <ContextSelector
-        value={formState.contextMode}
-        onChange={(v) => setFormState((s) => ({ ...s, contextMode: v }))}
-      />
-
-      {/* Custom Scene Prompt */}
-      <div className="card">
-        <h3 className="section-title">Scène personnalisée</h3>
-        <div className="flex gap-2">
-          <textarea
-            value={formState.customScenePrompt}
-            onChange={(e) =>
-              setFormState((s) => ({ ...s, customScenePrompt: e.target.value }))
-            }
-            placeholder="Décrivez la scène idéale..."
-            rows={3}
-            className="input-field text-sm resize-none flex-1"
-          />
-          <VoiceInput
-            onTranscript={(t) =>
-              setFormState((s) => ({
-                ...s,
-                customScenePrompt: (s.customScenePrompt + ' ' + t).trim(),
-              }))
-            }
-          />
-        </div>
-      </div>
-
+      {/* 3. Output Formats */}
       <OutputSelector
         value={formState.outputPack}
         onChange={(v) => setFormState((s) => ({ ...s, outputPack: v }))}
       />
 
+      {/* 4. Overlay / Gabarit */}
+      <OverlayEditor
+        overlays={formState.overlays}
+        onChange={(overlays) => setFormState((s) => ({ ...s, overlays }))}
+        onApplyGlobal={onApplyGlobalOverlays}
+        showApplyGlobal={hasImages}
+      />
+
       {/* Generate Button */}
       <button
         onClick={onGenerate}
-        disabled={isLoading || formState.productChoice.preset_product_ids.length === 0}
+        disabled={isLoading || !canGenerate}
         className="btn-primary w-full py-4 text-base"
       >
         {isLoading ? (
