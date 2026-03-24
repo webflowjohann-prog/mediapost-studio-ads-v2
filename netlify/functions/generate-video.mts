@@ -1,9 +1,7 @@
 // ============================================================
 // Netlify Function: generate-video (synchrone, retour immédiat)
-// Stocke le job dans Blobs, déclenche la background function,
-// retourne le jobId au client instantanément
+// Génère un jobId, trigger la background function, retourne
 // ============================================================
-import { getStore } from "@netlify/blobs";
 
 export default async (request: Request) => {
   if (request.method === 'OPTIONS') {
@@ -20,26 +18,35 @@ export default async (request: Request) => {
     const body = await request.json();
     const jobId = `vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    // Store initial job status
-    const store = getStore({ name: "video-jobs", consistency: "strong" });
-    await store.setJSON(jobId, { status: "pending", progress: "Initialisation..." });
-
     // Trigger background function (fire and forget)
     const url = new URL(request.url);
     const bgUrl = `${url.origin}/.netlify/functions/generate-video-background`;
 
-    // Don't await — fire and forget
+    console.log(`[generate-video] Launching job ${jobId}, triggering ${bgUrl}`);
+
+    // Fire and forget — don't await
     fetch(bgUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...body, jobId }),
     }).catch((err) => {
-      console.error('[generate-video] Failed to trigger background:', err.message);
+      console.error('[generate-video] Trigger failed:', err.message);
     });
 
-    // Return immediately
-    return Response.json({ jobId, status: 'started' });
+    // Return immediately with jobId
+    return new Response(JSON.stringify({ jobId, status: 'started' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
   } catch (error: any) {
-    return Response.json({ error: error.message || 'Erreur interne.' }, { status: 500 });
+    console.error('[generate-video] Error:', error);
+    return new Response(JSON.stringify({ error: error.message || 'Erreur interne.' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
+};
+
+export const config = {
+  path: '/.netlify/functions/generate-video',
 };
