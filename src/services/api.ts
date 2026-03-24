@@ -159,25 +159,26 @@ export async function generateVideo(
   quality: string,
   onProgress?: (msg: string) => void,
 ): Promise<{ videoBase64: string }> {
-  // Step 1: Generate a unique job ID
-  const jobId = `vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  // Step 1: Launch the job via generate-video (returns jobId instantly)
   onProgress?.('Lancement de la génération vidéo...');
 
-  // Step 2: Call the background function directly (returns 202 immediately)
-  const bgRes = await fetch(`${API_BASE}/generate-video-background`, {
+  const launchRes = await fetch(`${API_BASE}/generate-video`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jobId, imageBase64, prompt, ratio, quality }),
+    body: JSON.stringify({ imageBase64, prompt, ratio, quality }),
   });
 
-  // Background function returns 202 Accepted
-  if (bgRes.status !== 202) {
-    throw new Error(`Erreur lancement vidéo: HTTP ${bgRes.status}`);
+  if (!launchRes.ok) {
+    const err = await launchRes.json().catch(() => ({ error: `HTTP ${launchRes.status}` }));
+    throw new Error(err.error || `Erreur lancement vidéo: ${launchRes.status}`);
   }
 
-  // Step 3: Poll video-status until done (max 8 min)
-  const maxPollTime = 480000; // 8 min
-  const pollInterval = 5000;  // 5s
+  const { jobId } = await launchRes.json();
+  if (!jobId) throw new Error('Pas de jobId retourné.');
+
+  // Step 2: Poll video-status until done (max 8 min)
+  const maxPollTime = 480000;
+  const pollInterval = 5000;
   let elapsed = 0;
 
   while (elapsed < maxPollTime) {
@@ -185,9 +186,7 @@ export async function generateVideo(
     elapsed += pollInterval;
 
     try {
-      const res = await fetch(
-        `${API_BASE}/video-status?jobId=${encodeURIComponent(jobId)}`,
-      );
+      const res = await fetch(`${API_BASE}/video-status?jobId=${encodeURIComponent(jobId)}`);
       if (!res.ok) continue;
 
       const status = await res.json();
@@ -201,11 +200,9 @@ export async function generateVideo(
         throw new Error(status.error || 'Erreur lors de la génération vidéo.');
       }
 
-      // Still processing
       onProgress?.(status.progress || `Génération en cours... ${Math.round(elapsed / 1000)}s`);
     } catch (e: any) {
       if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed')) throw e;
-      // Network error, continue polling
     }
   }
 
