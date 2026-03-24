@@ -1,7 +1,11 @@
 // ============================================================
-// Netlify Function: generate-video (synchrone, retour immédiat)
-// Génère un jobId, trigger la background function, retourne
+// Netlify Function: generate-video (SYNC - 10s timeout)
+// 1. Reçoit l'image + prompt du client
+// 2. Stocke l'image dans Netlify Blobs (contourne limite body BG)
+// 3. Déclenche la background function avec juste le jobId
+// 4. Retourne le jobId immédiatement
 // ============================================================
+import { getStore } from "@netlify/blobs";
 
 export default async (request: Request) => {
   if (request.method === 'OPTIONS') {
@@ -15,25 +19,35 @@ export default async (request: Request) => {
   }
 
   try {
-    const body = await request.json();
+    const { imageBase64, prompt, ratio, quality } = await request.json();
     const jobId = `vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    // Trigger background function (fire and forget)
+    console.log(`[generate-video] Job ${jobId}: storing image in Blobs...`);
+
+    // Store the full payload in Blobs (sync function can handle large bodies)
+    const store = getStore({ name: "video-jobs", consistency: "strong" });
+    await store.setJSON(jobId, {
+      status: "pending",
+      progress: "Initialisation...",
+      payload: { imageBase64, prompt, ratio, quality },
+    });
+
+    console.log(`[generate-video] Job ${jobId}: triggering background function...`);
+
+    // Trigger background function with just the jobId (tiny body = no size limit issue)
     const url = new URL(request.url);
     const bgUrl = `${url.origin}/.netlify/functions/generate-video-background`;
 
-    console.log(`[generate-video] Launching job ${jobId}, triggering ${bgUrl}`);
-
-    // Fire and forget — don't await
     fetch(bgUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...body, jobId }),
+      body: JSON.stringify({ jobId }),
     }).catch((err) => {
       console.error('[generate-video] Trigger failed:', err.message);
     });
 
-    // Return immediately with jobId
+    console.log(`[generate-video] Job ${jobId}: launched OK`);
+
     return new Response(JSON.stringify({ jobId, status: 'started' }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },

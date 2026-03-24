@@ -150,7 +150,7 @@ export async function editImage(
   });
 }
 
-// --- Video Generation (async: background function + poll status) ---
+// --- Video Generation (async: sync launcher stores in Blobs, background processes) ---
 
 export async function generateVideo(
   imageBase64: string,
@@ -159,33 +159,33 @@ export async function generateVideo(
   quality: string,
   onProgress?: (msg: string) => void,
 ): Promise<{ videoBase64: string }> {
-  // Generate unique job ID client-side
-  const jobId = `vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   onProgress?.('Lancement de la génération vidéo...');
 
-  // Call background function DIRECTLY (returns 202 immediately)
-  // Background functions = suffix "-background" in filename
-  const bgRes = await fetch(`${API_BASE}/generate-video-background`, {
+  // Step 1: Call sync function (stores image in Blobs + triggers background)
+  const launchRes = await fetch(`${API_BASE}/generate-video`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jobId, imageBase64, prompt, ratio, quality }),
+    body: JSON.stringify({ imageBase64, prompt, ratio, quality }),
   });
 
-  // 202 = background function accepted (normal behavior)
-  // Any other status = error
-  if (bgRes.status !== 202) {
-    throw new Error(`Erreur lancement vidéo: HTTP ${bgRes.status}`);
+  if (!launchRes.ok) {
+    const err = await launchRes.json().catch(() => ({ error: `HTTP ${launchRes.status}` }));
+    throw new Error(err.error || `Erreur lancement vidéo: ${launchRes.status}`);
   }
 
-  // Poll video-status until done (max 8 min)
+  const { jobId } = await launchRes.json();
+  if (!jobId) throw new Error('Pas de jobId retourné.');
+
+  onProgress?.('Veo traite votre vidéo...');
+
+  // Step 2: Poll video-status until done (max 8 min)
   const maxPollTime = 480000;
   const pollInterval = 6000;
   let elapsed = 0;
 
-  // Wait 8s before first poll (let background function start)
-  await new Promise(r => setTimeout(r, 8000));
-  elapsed += 8000;
-  onProgress?.('Veo traite votre vidéo...');
+  // Wait 10s before first poll
+  await new Promise(r => setTimeout(r, 10000));
+  elapsed += 10000;
 
   while (elapsed < maxPollTime) {
     try {
@@ -205,7 +205,6 @@ export async function generateVideo(
         onProgress?.(status.progress || `Génération en cours... ${Math.round(elapsed / 1000)}s`);
       }
     } catch (e: any) {
-      // Re-throw Veo errors, ignore network glitches
       if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed') && !e.message.includes('NetworkError')) {
         throw e;
       }

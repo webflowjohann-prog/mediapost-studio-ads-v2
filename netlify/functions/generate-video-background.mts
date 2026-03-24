@@ -1,26 +1,38 @@
 // ============================================================
-// Background Function: generate-video-background
-// - Client POST ici → reçoit 202 immédiatement
-// - La function tourne en arrière-plan (15 min max)
-// - Appelle Veo predictLongRunning, poll, stocke dans Blobs
-// - Client poll video-status pour récupérer le résultat
+// Background Function: generate-video-background (15 min timeout)
+// 1. Reçoit juste le jobId (tiny body)
+// 2. Lit l'image + prompt depuis Netlify Blobs
+// 3. Appelle Veo predictLongRunning
+// 4. Poll jusqu'à terminaison
+// 5. Télécharge et stocke la vidéo dans Blobs
 // ============================================================
 import { getStore } from "@netlify/blobs";
 
 export default async (request: Request) => {
   let jobId = '';
+  let store: any;
+
   try {
     const body = await request.json();
-    const { imageBase64, prompt, ratio, quality } = body;
-    jobId = body.jobId || `vid_${Date.now()}`;
-    
+    jobId = body.jobId;
+    if (!jobId) { console.error("[video-bg] No jobId"); return; }
+
     const apiKey = Netlify.env.get("GOOGLE_AI_API_KEY");
-    if (!apiKey) {
-      console.error("[video-bg] No API key");
+    if (!apiKey) { console.error("[video-bg] No API key"); return; }
+
+    store = getStore({ name: "video-jobs", consistency: "strong" });
+
+    // Read the full payload from Blobs
+    const jobData = await store.get(jobId, { type: 'json' });
+    if (!jobData || !jobData.payload) {
+      console.error(`[video-bg] Job ${jobId}: no payload in Blobs`);
+      await store.setJSON(jobId, { status: "error", error: "Données du job introuvables." });
       return;
     }
 
-    const store = getStore({ name: "video-jobs", consistency: "strong" });
+    const { imageBase64, prompt, ratio, quality } = jobData.payload;
+
+    // Update status (clear the payload to save memory)
     await store.setJSON(jobId, { status: "processing", progress: "Envoi à Veo..." });
 
     const model = quality === "pro" ? "veo-3.1-generate-preview" : "veo-3.1-fast-generate-preview";
@@ -33,7 +45,6 @@ export default async (request: Request) => {
     }
 
     const BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-
     console.log(`[video-bg] Job ${jobId}: Starting ${model}`);
 
     // Step 1: Start generation
@@ -85,7 +96,7 @@ export default async (request: Request) => {
         return;
       }
       operation = await pollRes.json();
-      console.log(`[video-bg] Job ${jobId}: Poll ${elapsed/1000}s done=${operation.done}`);
+      console.log(`[video-bg] Job ${jobId}: ${elapsed/1000}s done=${operation.done}`);
     }
 
     if (!operation.done) {
@@ -105,8 +116,8 @@ export default async (request: Request) => {
 
     const videoUri = operation.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
     if (!videoUri) {
-      console.error(`[video-bg] Job ${jobId}: No video URI`, JSON.stringify(operation.response).substring(0, 200));
-      await store.setJSON(jobId, { status: "error", error: "Pas de vidéo dans la réponse Veo." });
+      console.error(`[video-bg] Job ${jobId}: No video URI`);
+      await store.setJSON(jobId, { status: "error", error: "Pas de vidéo dans la réponse." });
       return;
     }
 
@@ -122,22 +133,13 @@ export default async (request: Request) => {
 
     const videoBuffer = await videoRes.arrayBuffer();
     const videoBase64 = Buffer.from(videoBuffer).toString("base64");
-
     console.log(`[video-bg] Job ${jobId}: Done! ${videoBuffer.byteLength} bytes`);
 
-    // Step 4: Store result
-    await store.setJSON(jobId, {
-      status: "done",
-      videoBase64,
-      mimeType: "video/mp4",
-    });
+    await store.setJSON(jobId, { status: "done", videoBase64, mimeType: "video/mp4" });
   } catch (error: any) {
-    console.error("[video-bg] Fatal error:", error);
-    if (jobId) {
-      try {
-        const store = getStore({ name: "video-jobs", consistency: "strong" });
-        await store.setJSON(jobId, { status: "error", error: error.message || "Erreur interne." });
-      } catch {}
+    console.error("[video-bg] Fatal:", error);
+    if (jobId && store) {
+      try { await store.setJSON(jobId, { status: "error", error: error.message || "Erreur interne." }); } catch {}
     }
   }
 };
