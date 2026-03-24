@@ -97,9 +97,8 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
         );
 
         const prompt = buildImagePrompt(generationState, spec);
-        let apiRatio = spec.ratio;
-        if (apiRatio === '4:5') apiRatio = '3:4';
-        if (apiRatio === '3:2') apiRatio = '4:3';
+        // Gemini 3.1 supports: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9
+        const apiRatio = spec.ratio;
 
         // Extract product image base64 if available (for visual reference)
         let referenceImageBase64: string | undefined;

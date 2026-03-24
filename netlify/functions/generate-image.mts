@@ -41,10 +41,17 @@ export default async (request: Request) => {
     const model = 'gemini-3.1-flash-image-preview';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
+    // Gemini 3.1 Flash Image supports: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9, 1:4, 4:1, 1:8, 8:1
+    const SUPPORTED_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9', '1:4', '4:1', '1:8', '8:1'];
+    const aspectRatio = SUPPORTED_RATIOS.includes(ratio) ? ratio : '1:1';
+
     const requestBody: any = {
       contents: [{ parts }],
       generationConfig: {
         responseModalities: ['IMAGE', 'TEXT'],
+        imageConfig: {
+          aspectRatio: aspectRatio,
+        },
       },
     };
 
