@@ -101,6 +101,7 @@ export interface GeneratedImage {
   videoUrl?: string;
   isVideoLoading?: boolean;
   videoGenerationError?: string;
+  videoProgress?: string;
 }
 
 // --- Avatar Platform ---

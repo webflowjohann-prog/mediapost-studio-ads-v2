@@ -180,7 +180,7 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
 
       setGeneratedImages((prev) =>
         prev.map((img) =>
-          img.id === imageId ? { ...img, isVideoLoading: true, videoGenerationError: undefined } : img,
+          img.id === imageId ? { ...img, isVideoLoading: true, videoGenerationError: undefined, videoProgress: 'Lancement...' } : img,
         ),
       );
 
@@ -188,10 +188,21 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
         const imageBase64 = image.url.split(',')[1];
         if (!imageBase64) throw new Error("Could not extract image data.");
 
-        // Animation prompt: the logo and text must stay static
         const videoPromptWithConstraint = `${prompt}. CONSTRAINT: Any logo or text overlay on the image must remain perfectly static and not move or deform. Only the background and main subject should animate.`;
 
-        const result = await generateVideo(imageBase64, videoPromptWithConstraint, image.spec.ratio, 'fast');
+        const result = await generateVideo(
+          imageBase64,
+          videoPromptWithConstraint,
+          image.spec.ratio,
+          'fast',
+          (progress) => {
+            setGeneratedImages((prev) =>
+              prev.map((img) =>
+                img.id === imageId ? { ...img, videoProgress: progress } : img,
+              ),
+            );
+          },
+        );
 
         // Convert base64 video to blob URL
         const binaryString = atob(result.videoBase64 || '');
@@ -203,14 +214,14 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
 
         setGeneratedImages((prev) =>
           prev.map((img) =>
-            img.id === imageId ? { ...img, videoUrl, isVideoLoading: false } : img,
+            img.id === imageId ? { ...img, videoUrl, isVideoLoading: false, videoProgress: undefined } : img,
           ),
         );
       } catch (e: any) {
         setGeneratedImages((prev) =>
           prev.map((img) =>
             img.id === imageId
-              ? { ...img, isVideoLoading: false, videoGenerationError: `Erreur: ${e.message}` }
+              ? { ...img, isVideoLoading: false, videoGenerationError: `Erreur: ${e.message}`, videoProgress: undefined }
               : img,
           ),
         );

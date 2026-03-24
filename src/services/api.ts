@@ -150,20 +150,61 @@ export async function editImage(
   });
 }
 
-// --- Video Generation ---
+// --- Video Generation (async: launch job + poll status) ---
 
 export async function generateVideo(
   imageBase64: string,
   prompt: string,
   ratio: string,
   quality: string,
-): Promise<{ videoUrl?: string; videoBase64?: string }> {
-  return callFunction('generate-video', {
+  onProgress?: (msg: string) => void,
+): Promise<{ videoBase64: string }> {
+  // Step 1: Launch the background job (returns instantly with jobId)
+  onProgress?.('Lancement de la génération vidéo...');
+  const launch = await callFunction<{ jobId: string }>('generate-video', {
     imageBase64,
     prompt,
     ratio,
     quality,
-  });
+  }, 15000, 0);
+
+  if (!launch.jobId) throw new Error('Impossible de lancer la génération vidéo.');
+
+  // Step 2: Poll video-status until done (max 5 min)
+  const maxPollTime = 360000; // 6 min
+  const pollInterval = 5000;  // 5s
+  let elapsed = 0;
+
+  while (elapsed < maxPollTime) {
+    await new Promise(r => setTimeout(r, pollInterval));
+    elapsed += pollInterval;
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/video-status?jobId=${encodeURIComponent(launch.jobId)}`,
+      );
+      if (!res.ok) continue;
+
+      const status = await res.json();
+
+      if (status.status === 'done' && status.videoBase64) {
+        onProgress?.('Vidéo prête !');
+        return { videoBase64: status.videoBase64 };
+      }
+
+      if (status.status === 'error') {
+        throw new Error(status.error || 'Erreur lors de la génération vidéo.');
+      }
+
+      // Still processing
+      onProgress?.(status.progress || `Génération en cours... ${Math.round(elapsed / 1000)}s`);
+    } catch (e: any) {
+      if (e.message && !e.message.includes('fetch')) throw e;
+      // Network error, continue polling
+    }
+  }
+
+  throw new Error('Timeout: la vidéo a pris trop de temps (6 min max).');
 }
 
 // --- Text Generation (Slogans, Scene Suggestions) ---
