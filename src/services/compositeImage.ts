@@ -1,226 +1,110 @@
-// ─────────────────────────────────────────────────────────────
-// compositeImage.ts — Fusionne image + overlays en un seul PNG
-// Utilise Canvas 2D pour "graver" logo et texte sur l'image
-// Gère les logos SVG externes et les problèmes CORS
-// ─────────────────────────────────────────────────────────────
 import type { Overlay, LogoOverlay, TextOverlay } from '../types';
 
-/**
- * Charge une image en contournant les problèmes CORS.
- * Pour les URLs externes (http/https), on fetch d'abord en blob
- * puis on crée un object URL local — pas de CORS sur le canvas.
- * Pour les data: URLs et blob: URLs, on charge directement.
- */
-async function loadImage(src: string): Promise<HTMLImageElement> {
-  let safeSrc = src;
+function loadImg(src: string, useCors: boolean): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    if (useCors) img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Image load failed: ${src.substring(0, 50)}`));
+    img.src = src;
+  });
+}
 
-  // Si c'est une URL externe, on la convertit en blob URL local
+async function rasterizeSvg(svgDataUrl: string): Promise<HTMLImageElement> {
+  let svgText = '';
+  if (svgDataUrl.includes(';base64,')) {
+    svgText = atob(svgDataUrl.split(';base64,')[1]);
+  } else if (svgDataUrl.includes(',')) {
+    svgText = decodeURIComponent(svgDataUrl.split(',')[1]);
+  }
+  let w = 800, h = 200;
+  const vb = svgText.match(/viewBox=["']([^"']+)["']/);
+  if (vb) {
+    const p = vb[1].split(/[\s,]+/).map(Number);
+    if (p.length >= 4 && p[2] > 0 && p[3] > 0) { w = p[2]; h = p[3]; }
+  }
+  const scale = 3;
+  const c = document.createElement('canvas');
+  c.width = w * scale; c.height = h * scale;
+  const ctx = c.getContext('2d')!;
+  const svgImg = await loadImg(svgDataUrl, false);
+  ctx.drawImage(svgImg, 0, 0, c.width, c.height);
+  return loadImg(c.toDataURL('image/png'), false);
+}
+
+async function loadImageSafe(src: string): Promise<HTMLImageElement> {
+  const isSvg = src.includes('image/svg') || src.endsWith('.svg');
+  if (isSvg && src.startsWith('data:')) return rasterizeSvg(src);
   if (src.startsWith('http://') || src.startsWith('https://')) {
     try {
       const resp = await fetch(src);
       const blob = await resp.blob();
-
-      // Si c'est un SVG, on le convertit en PNG via un canvas intermédiaire
       if (blob.type === 'image/svg+xml' || src.endsWith('.svg')) {
-        return await svgBlobToImage(blob);
+        const text = await blob.text();
+        return rasterizeSvg(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`);
       }
-
-      safeSrc = URL.createObjectURL(blob);
-    } catch (e) {
-      console.warn('[composite] Fetch failed for', src.substring(0, 60), '- trying direct load');
-      // Fallback: essayer le chargement direct
-    }
+      return loadImg(URL.createObjectURL(blob), false);
+    } catch (e) { console.warn('[composite] fetch failed', src.substring(0, 50)); }
   }
-
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Failed to load: ${src.substring(0, 60)}`));
-    img.src = safeSrc;
-  });
+  return loadImg(src, false);
 }
 
-/**
- * Convertit un blob SVG en HTMLImageElement PNG via un canvas intermédiaire.
- * Les SVG n'ont pas de dimensions intrinsèques fiables dans un canvas,
- * donc on les rasterise d'abord à une taille fixe.
- */
-async function svgBlobToImage(blob: Blob): Promise<HTMLImageElement> {
-  const svgText = await blob.text();
-
-  // Extraire les dimensions du SVG si possible
-  let svgW = 400, svgH = 120;
-  const widthMatch = svgText.match(/width="([^"]+)"/);
-  const heightMatch = svgText.match(/height="([^"]+)"/);
-  const vbMatch = svgText.match(/viewBox="([^"]+)"/);
-
-  if (widthMatch && heightMatch) {
-    svgW = parseFloat(widthMatch[1]) || svgW;
-    svgH = parseFloat(heightMatch[1]) || svgH;
-  } else if (vbMatch) {
-    const parts = vbMatch[1].split(/[\s,]+/).map(Number);
-    if (parts.length >= 4) {
-      svgW = parts[2] || svgW;
-      svgH = parts[3] || svgH;
-    }
-  }
-
-  // Rasteriser à haute résolution
-  const scale = 3;
-  const canvas = document.createElement('canvas');
-  canvas.width = svgW * scale;
-  canvas.height = svgH * scale;
-  const ctx = canvas.getContext('2d')!;
-
-  // Créer une image depuis le SVG inline en data URL
-  const svgDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
-
-  const svgImg = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('SVG rasterization failed'));
-    img.src = svgDataUrl;
-  });
-
-  ctx.drawImage(svgImg, 0, 0, canvas.width, canvas.height);
-
-  // Convertir le canvas en image
-  const pngDataUrl = canvas.toDataURL('image/png');
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('PNG from SVG failed'));
-    img.src = pngDataUrl;
-  });
-}
-
-/**
- * Composite : dessine l'image de base + tous les overlays sur un Canvas,
- * puis retourne un blob URL téléchargeable.
- */
 export async function compositeImageWithOverlays(
-  imageUrl: string,
-  overlays: Overlay[],
+  imageUrl: string, overlays: Overlay[]
 ): Promise<string> {
-  const baseImg = await loadImage(imageUrl);
-  const W = baseImg.naturalWidth;
-  const H = baseImg.naturalHeight;
-
+  const baseImg = await loadImageSafe(imageUrl);
+  const W = baseImg.naturalWidth, H = baseImg.naturalHeight;
   const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
+  canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d')!;
-
   ctx.drawImage(baseImg, 0, 0, W, H);
-
-  // Dessiner chaque overlay
-  for (const overlay of overlays) {
+  for (const ov of overlays) {
     try {
-      if (overlay.type === 'logo') {
-        await drawLogoOverlay(ctx, overlay as LogoOverlay, W, H);
-      } else if (overlay.type === 'text') {
-        drawTextOverlay(ctx, overlay as TextOverlay, W, H);
-      }
-    } catch (e) {
-      console.warn('[composite] Overlay failed:', overlay.type, e);
-    }
+      if (ov.type === 'logo') await drawLogo(ctx, ov as LogoOverlay, W, H);
+      else if (ov.type === 'text') drawText(ctx, ov as TextOverlay, W, H);
+    } catch (e) { console.warn('[composite] overlay failed', ov.type, e); }
   }
-
   return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return reject(new Error('Canvas export failed'));
-        resolve(URL.createObjectURL(blob));
-      },
-      'image/png',
-      1.0,
-    );
+    canvas.toBlob(b => b ? resolve(URL.createObjectURL(b)) : reject(new Error('export failed')), 'image/png', 1.0);
   });
 }
 
-/**
- * Dessine un logo sur le canvas
- */
-async function drawLogoOverlay(
-  ctx: CanvasRenderingContext2D,
-  overlay: LogoOverlay,
-  W: number,
-  H: number,
-) {
-  const logoImg = await loadImage(overlay.url);
-
-  const cx = (overlay.x / 100) * W;
-  const cy = (overlay.y / 100) * H;
-
-  const logoW = (overlay.size / 100) * W;
-  const logoH = logoW * (logoImg.naturalHeight / logoImg.naturalWidth);
-
+async function drawLogo(ctx: CanvasRenderingContext2D, ov: LogoOverlay, W: number, H: number) {
+  const img = await loadImageSafe(ov.url);
+  const cx = (ov.x / 100) * W, cy = (ov.y / 100) * H;
+  const lw = (ov.size / 100) * W, lh = lw * (img.naturalHeight / img.naturalWidth);
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.rotate((overlay.rotation * Math.PI) / 180);
-  ctx.drawImage(logoImg, -logoW / 2, -logoH / 2, logoW, logoH);
+  ctx.rotate((ov.rotation * Math.PI) / 180);
+  ctx.drawImage(img, -lw / 2, -lh / 2, lw, lh);
   ctx.restore();
 }
 
-/**
- * Dessine un texte sur le canvas
- */
-function drawTextOverlay(
-  ctx: CanvasRenderingContext2D,
-  overlay: TextOverlay,
-  W: number,
-  H: number,
-) {
-  const cx = (overlay.x / 100) * W;
-  const cy = (overlay.y / 100) * H;
-
-  const fontSizePx = (overlay.fontSize / 100) * W;
-  const scaledFontSize = fontSizePx * overlay.scale;
-
+function drawText(ctx: CanvasRenderingContext2D, ov: TextOverlay, W: number, H: number) {
+  const cx = (ov.x / 100) * W, cy = (ov.y / 100) * H;
+  const fs = (ov.fontSize / 100) * W * ov.scale;
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.rotate((overlay.rotation * Math.PI) / 180);
-
-  if (overlay.skewX !== 0 || overlay.skewY !== 0) {
-    const skewXRad = (overlay.skewX * Math.PI) / 180;
-    const skewYRad = (overlay.skewY * Math.PI) / 180;
-    ctx.transform(1, Math.tan(skewYRad), Math.tan(skewXRad), 1, 0, 0);
-  }
-
-  ctx.font = `${scaledFontSize}px "${overlay.fontFamily}", sans-serif`;
+  ctx.rotate((ov.rotation * Math.PI) / 180);
+  if (ov.skewX || ov.skewY) ctx.transform(1, Math.tan(ov.skewY*Math.PI/180), Math.tan(ov.skewX*Math.PI/180), 1, 0, 0);
+  ctx.font = `${fs}px "${ov.fontFamily}", sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-
-  const textMetrics = ctx.measureText(overlay.text);
-  const textWidth = textMetrics.width;
-
-  // Bannière
-  if (overlay.bannerEnabled) {
-    const padX = overlay.bannerPadding * scaledFontSize;
-    const padY = overlay.bannerPadding * 0.5 * scaledFontSize;
-    const borderRadius = overlay.bannerBorderRadius * scaledFontSize;
-    const bx = -textWidth / 2 - padX;
-    const by = -scaledFontSize / 2 - padY;
-    const bw = textWidth + padX * 2;
-    const bh = scaledFontSize + padY * 2;
-
-    ctx.fillStyle = overlay.bannerColorHex;
+  const tw = ctx.measureText(ov.text).width;
+  if (ov.bannerEnabled) {
+    const px = ov.bannerPadding * fs, py = ov.bannerPadding * 0.5 * fs;
+    const br = ov.bannerBorderRadius * fs;
+    ctx.fillStyle = ov.bannerColorHex;
     ctx.beginPath();
-    ctx.roundRect(bx, by, bw, bh, borderRadius);
+    ctx.roundRect(-tw/2-px, -fs/2-py, tw+px*2, fs+py*2, br);
     ctx.fill();
   }
-
-  // Ombre
-  if (overlay.shadow) {
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-    ctx.shadowBlur = 4 * (scaledFontSize / 20);
-    ctx.shadowOffsetX = 2 * (scaledFontSize / 20);
-    ctx.shadowOffsetY = 2 * (scaledFontSize / 20);
+  if (ov.shadow) {
+    const s = fs / 20;
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 4*s; ctx.shadowOffsetX = 2*s; ctx.shadowOffsetY = 2*s;
   }
-
-  ctx.fillStyle = overlay.colorHex;
-  ctx.fillText(overlay.text, 0, 0);
-
+  ctx.fillStyle = ov.colorHex;
+  ctx.fillText(ov.text, 0, 0);
   ctx.restore();
 }
