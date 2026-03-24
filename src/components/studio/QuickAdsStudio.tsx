@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Header } from './Header';
 import { ControlPanel } from './ControlPanel';
 import { Gallery } from './Gallery';
+import { BatchDeclinationPanel } from './BatchDeclinationPanel';
 import { generateImage, editImage, generateVideo, buildImagePrompt } from '../../services/api';
 import type { FormState, GeneratedImage } from '../../types';
 import { BRAND, OUTPUT_SPECS, OUTPUT_PACK_LABELS } from '../../constants';
@@ -255,6 +256,8 @@ export const QuickAdsStudio: React.FC<QuickAdsStudioProps> = ({ onBack }) => {
                 );
               }}
             />
+
+            <BatchDeclinationPanel masterImages={generatedImages} />
           </div>
         </div>
       </main>

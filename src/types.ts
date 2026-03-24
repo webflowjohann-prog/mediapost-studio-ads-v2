@@ -60,6 +60,17 @@ export interface TextOverlay extends BaseOverlay {
 
 export type Overlay = LogoOverlay | TextOverlay;
 
+// --- Franchise (batch declination) ---
+export interface FranchiseData {
+  id: string;
+  name: string;
+  city: string;
+  textLine1: string;
+  textLine2: string;
+  logoUrl: string;
+  accentColor: string;
+}
+
 // --- Form State (Quick ADS Studio) ---
 export interface FormState {
   productChoice: {
