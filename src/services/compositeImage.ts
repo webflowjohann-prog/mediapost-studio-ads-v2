@@ -5,17 +5,19 @@ function loadImg(src: string, useCors: boolean): Promise<HTMLImageElement> {
     const img = new Image();
     if (useCors) img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Image load failed: ${src.substring(0, 50)}`));
+    img.onerror = () => reject(new Error(`Image load failed: ${src.substring(0, 80)}`));
     img.src = src;
   });
 }
 
-async function rasterizeSvg(svgDataUrl: string): Promise<HTMLImageElement> {
+async function rasterizeSvg(svgSrc: string): Promise<HTMLImageElement> {
   let svgText = '';
-  if (svgDataUrl.includes(';base64,')) {
-    svgText = atob(svgDataUrl.split(';base64,')[1]);
-  } else if (svgDataUrl.includes(',')) {
-    svgText = decodeURIComponent(svgDataUrl.split(',')[1]);
+  if (svgSrc.includes(';base64,')) {
+    svgText = atob(svgSrc.split(';base64,')[1]);
+  } else if (svgSrc.startsWith('data:') && svgSrc.includes(',')) {
+    svgText = decodeURIComponent(svgSrc.split(',')[1]);
+  } else {
+    svgText = svgSrc;
   }
   let w = 800, h = 200;
   const vb = svgText.match(/viewBox=["']([^"']+)["']/);
@@ -27,27 +29,83 @@ async function rasterizeSvg(svgDataUrl: string): Promise<HTMLImageElement> {
   const c = document.createElement('canvas');
   c.width = w * scale; c.height = h * scale;
   const ctx = c.getContext('2d')!;
-  const svgImg = await loadImg(svgDataUrl, false);
+  const dataUrl = svgSrc.startsWith('data:') ? svgSrc : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
+  const svgImg = await loadImg(dataUrl, false);
   ctx.drawImage(svgImg, 0, 0, c.width, c.height);
   return loadImg(c.toDataURL('image/png'), false);
 }
 
+/**
+ * Proxy une image externe via la Netlify Function proxy-image
+ * pour contourner les restrictions CORS
+ */
+async function proxyImage(url: string): Promise<string> {
+  const resp = await fetch('/.netlify/functions/proxy-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: 'proxy failed' }));
+    throw new Error(err.error || `Proxy error ${resp.status}`);
+  }
+  const { imageBase64, mimeType } = await resp.json();
+  return `data:${mimeType};base64,${imageBase64}`;
+}
+
+/**
+ * Charge une image de manière sûre pour Canvas.
+ * 1. data: URLs → direct (SVG = rasterise d'abord)
+ * 2. blob: URLs → direct
+ * 3. http/https → essaie fetch direct, sinon proxy via Netlify Function
+ */
 async function loadImageSafe(src: string): Promise<HTMLImageElement> {
-  const isSvg = src.includes('image/svg') || src.endsWith('.svg');
-  if (isSvg && src.startsWith('data:')) return rasterizeSvg(src);
+  const isSvg = src.includes('image/svg') || src.toLowerCase().endsWith('.svg');
+
+  // data: URL
+  if (src.startsWith('data:')) {
+    return isSvg ? rasterizeSvg(src) : loadImg(src, false);
+  }
+
+  // blob: URL
+  if (src.startsWith('blob:')) {
+    return loadImg(src, false);
+  }
+
+  // URL externe (http/https)
   if (src.startsWith('http://') || src.startsWith('https://')) {
+    // Essayer le fetch direct d'abord
     try {
       const resp = await fetch(src);
-      const blob = await resp.blob();
-      if (blob.type === 'image/svg+xml' || src.endsWith('.svg')) {
-        const text = await blob.text();
-        return rasterizeSvg(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        if (blob.type === 'image/svg+xml' || isSvg) {
+          const text = await blob.text();
+          return rasterizeSvg(text);
+        }
+        const blobUrl = URL.createObjectURL(blob);
+        return loadImg(blobUrl, false);
       }
-      return loadImg(URL.createObjectURL(blob), false);
-    } catch (e) { console.warn('[composite] fetch failed', src.substring(0, 50)); }
+    } catch {
+      // fetch direct échoué (CORS ou réseau)
+    }
+
+    // Fallback: passer par le proxy serveur
+    try {
+      console.log('[composite] Using proxy for:', src.substring(0, 60));
+      const dataUrl = await proxyImage(src);
+      const proxiedIsSvg = dataUrl.includes('image/svg');
+      return proxiedIsSvg ? rasterizeSvg(dataUrl) : loadImg(dataUrl, false);
+    } catch (e) {
+      console.warn('[composite] Proxy also failed:', src.substring(0, 60), e);
+      throw e;
+    }
   }
+
   return loadImg(src, false);
 }
+
+// ─── COMPOSITE ────────────────────────────────────────────
 
 export async function compositeImageWithOverlays(
   imageUrl: string, overlays: Overlay[]
