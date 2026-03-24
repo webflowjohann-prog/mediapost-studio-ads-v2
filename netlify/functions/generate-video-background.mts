@@ -126,20 +126,75 @@ export default async (request: Request) => {
     // Step 3: Download video
     await store.setJSON(jobId, { status: "processing", progress: "Téléchargement de la vidéo..." });
 
-    const videoUri = operation.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
+    // Log the full operation response for debugging
+    const responseKeys = JSON.stringify(Object.keys(operation.response || {}));
+    console.log(`[video-bg] Job ${jobId}: operation.response keys: ${responseKeys}`);
+    console.log(`[video-bg] Job ${jobId}: full response (truncated): ${JSON.stringify(operation.response || {}).substring(0, 2000)}`);
+
+    // Try multiple known paths for the video URI (API versions differ)
+    let videoUri: string | undefined;
+
+    // Path 1: Gemini API REST format (official docs)
+    videoUri = operation.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
+
+    // Path 2: SDK-style camelCase
     if (!videoUri) {
-      console.error(`[video-bg] Job ${jobId}: No video URI`);
-      await store.setJSON(jobId, { status: "error", error: "Pas de vidéo dans la réponse." });
+      videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
+    }
+
+    // Path 3: Direct on response
+    if (!videoUri) {
+      videoUri = operation.response?.video?.uri;
+    }
+
+    // Path 4: Predictions format (some Vertex AI responses)
+    if (!videoUri) {
+      videoUri = operation.response?.predictions?.[0]?.video?.uri
+        || operation.response?.predictions?.[0]?.videoUri;
+    }
+
+    // Path 5: Deep search - recursively find any "uri" key that looks like a video URL
+    if (!videoUri) {
+      const findUri = (obj: any, depth = 0): string | undefined => {
+        if (!obj || depth > 6) return undefined;
+        if (typeof obj === 'string' && (obj.includes('download') || obj.includes('video'))) return obj;
+        if (typeof obj !== 'object') return undefined;
+        for (const key of Object.keys(obj)) {
+          if (key === 'uri' && typeof obj[key] === 'string') return obj[key];
+          const found = findUri(obj[key], depth + 1);
+          if (found) return found;
+        }
+        return undefined;
+      };
+      videoUri = findUri(operation.response);
+    }
+
+    if (!videoUri) {
+      const fullResp = JSON.stringify(operation).substring(0, 3000);
+      console.error(`[video-bg] Job ${jobId}: No video URI found. Full operation: ${fullResp}`);
+      await store.setJSON(jobId, {
+        status: "error",
+        error: "Pas de vidéo dans la réponse Veo. Contenu peut-être filtré (safety). Essayez un autre prompt.",
+        debug: fullResp.substring(0, 500),
+      });
       return;
     }
 
-    const sep = videoUri.includes("?") ? "&" : "?";
-    let videoRes = await fetch(`${videoUri}${sep}key=${apiKey}`);
+    console.log(`[video-bg] Job ${jobId}: Video URI found: ${videoUri.substring(0, 100)}...`);
+
+    // Download using x-goog-api-key header (official method per Gemini API docs)
+    let videoRes = await fetch(videoUri, {
+      headers: { "x-goog-api-key": apiKey },
+      redirect: "follow",
+    });
     if (!videoRes.ok) {
-      videoRes = await fetch(videoUri, { headers: { "x-goog-api-key": apiKey } });
+      // Fallback: try with ?key= param
+      const sep = videoUri.includes("?") ? "&" : "?";
+      videoRes = await fetch(`${videoUri}${sep}key=${apiKey}`, { redirect: "follow" });
     }
     if (!videoRes.ok) {
-      await store.setJSON(jobId, { status: "error", error: "Erreur téléchargement vidéo." });
+      console.error(`[video-bg] Job ${jobId}: Download failed ${videoRes.status}`);
+      await store.setJSON(jobId, { status: "error", error: `Erreur téléchargement vidéo (${videoRes.status}).` });
       return;
     }
 

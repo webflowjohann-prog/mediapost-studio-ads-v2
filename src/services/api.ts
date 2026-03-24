@@ -222,7 +222,8 @@ export async function generateVideo(
         }
 
         if (status.status === 'error') {
-          throw new Error(status.error || 'Erreur lors de la génération vidéo.');
+          const debugInfo = status.debug ? `\n[Debug: ${status.debug}]` : '';
+          throw new Error((status.error || 'Erreur lors de la génération vidéo.') + debugInfo);
         }
 
         // Show progress from the BG function

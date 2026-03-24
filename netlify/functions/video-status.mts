@@ -46,6 +46,7 @@ export default async (request: Request) => {
     if (job.progress) response.progress = job.progress;
     if (job.error) response.error = job.error;
     if (job.mimeType) response.mimeType = job.mimeType;
+    if (job.debug) response.debug = job.debug;
 
     // Only include videoBase64 when status is done
     if (job.status === 'done' && job.videoBase64) {
