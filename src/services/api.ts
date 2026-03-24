@@ -150,7 +150,7 @@ export async function editImage(
   });
 }
 
-// --- Video Generation (async: launch job + poll status) ---
+// --- Video Generation (async: background function + poll status) ---
 
 export async function generateVideo(
   imageBase64: string,
@@ -159,19 +159,24 @@ export async function generateVideo(
   quality: string,
   onProgress?: (msg: string) => void,
 ): Promise<{ videoBase64: string }> {
-  // Step 1: Launch the background job (returns instantly with jobId)
+  // Step 1: Generate a unique job ID
+  const jobId = `vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   onProgress?.('Lancement de la génération vidéo...');
-  const launch = await callFunction<{ jobId: string }>('generate-video', {
-    imageBase64,
-    prompt,
-    ratio,
-    quality,
-  }, 15000, 0);
 
-  if (!launch.jobId) throw new Error('Impossible de lancer la génération vidéo.');
+  // Step 2: Call the background function directly (returns 202 immediately)
+  const bgRes = await fetch(`${API_BASE}/generate-video-background`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobId, imageBase64, prompt, ratio, quality }),
+  });
 
-  // Step 2: Poll video-status until done (max 5 min)
-  const maxPollTime = 360000; // 6 min
+  // Background function returns 202 Accepted
+  if (bgRes.status !== 202) {
+    throw new Error(`Erreur lancement vidéo: HTTP ${bgRes.status}`);
+  }
+
+  // Step 3: Poll video-status until done (max 8 min)
+  const maxPollTime = 480000; // 8 min
   const pollInterval = 5000;  // 5s
   let elapsed = 0;
 
@@ -181,7 +186,7 @@ export async function generateVideo(
 
     try {
       const res = await fetch(
-        `${API_BASE}/video-status?jobId=${encodeURIComponent(launch.jobId)}`,
+        `${API_BASE}/video-status?jobId=${encodeURIComponent(jobId)}`,
       );
       if (!res.ok) continue;
 
@@ -199,12 +204,12 @@ export async function generateVideo(
       // Still processing
       onProgress?.(status.progress || `Génération en cours... ${Math.round(elapsed / 1000)}s`);
     } catch (e: any) {
-      if (e.message && !e.message.includes('fetch')) throw e;
+      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed')) throw e;
       // Network error, continue polling
     }
   }
 
-  throw new Error('Timeout: la vidéo a pris trop de temps (6 min max).');
+  throw new Error('Timeout: la vidéo a pris trop de temps (8 min max).');
 }
 
 // --- Text Generation (Slogans, Scene Suggestions) ---
