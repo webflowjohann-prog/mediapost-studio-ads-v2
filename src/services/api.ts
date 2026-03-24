@@ -159,51 +159,60 @@ export async function generateVideo(
   quality: string,
   onProgress?: (msg: string) => void,
 ): Promise<{ videoBase64: string }> {
-  // Step 1: Launch the job via generate-video (returns jobId instantly)
+  // Generate unique job ID client-side
+  const jobId = `vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   onProgress?.('Lancement de la génération vidéo...');
 
-  const launchRes = await fetch(`${API_BASE}/generate-video`, {
+  // Call background function DIRECTLY (returns 202 immediately)
+  // Background functions = suffix "-background" in filename
+  const bgRes = await fetch(`${API_BASE}/generate-video-background`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageBase64, prompt, ratio, quality }),
+    body: JSON.stringify({ jobId, imageBase64, prompt, ratio, quality }),
   });
 
-  if (!launchRes.ok) {
-    const err = await launchRes.json().catch(() => ({ error: `HTTP ${launchRes.status}` }));
-    throw new Error(err.error || `Erreur lancement vidéo: ${launchRes.status}`);
+  // 202 = background function accepted (normal behavior)
+  // Any other status = error
+  if (bgRes.status !== 202) {
+    throw new Error(`Erreur lancement vidéo: HTTP ${bgRes.status}`);
   }
 
-  const { jobId } = await launchRes.json();
-  if (!jobId) throw new Error('Pas de jobId retourné.');
-
-  // Step 2: Poll video-status until done (max 8 min)
+  // Poll video-status until done (max 8 min)
   const maxPollTime = 480000;
-  const pollInterval = 5000;
+  const pollInterval = 6000;
   let elapsed = 0;
 
-  while (elapsed < maxPollTime) {
-    await new Promise(r => setTimeout(r, pollInterval));
-    elapsed += pollInterval;
+  // Wait 8s before first poll (let background function start)
+  await new Promise(r => setTimeout(r, 8000));
+  elapsed += 8000;
+  onProgress?.('Veo traite votre vidéo...');
 
+  while (elapsed < maxPollTime) {
     try {
       const res = await fetch(`${API_BASE}/video-status?jobId=${encodeURIComponent(jobId)}`);
-      if (!res.ok) continue;
+      if (res.ok) {
+        const status = await res.json();
 
-      const status = await res.json();
+        if (status.status === 'done' && status.videoBase64) {
+          onProgress?.('Vidéo prête !');
+          return { videoBase64: status.videoBase64 };
+        }
 
-      if (status.status === 'done' && status.videoBase64) {
-        onProgress?.('Vidéo prête !');
-        return { videoBase64: status.videoBase64 };
+        if (status.status === 'error') {
+          throw new Error(status.error || 'Erreur lors de la génération vidéo.');
+        }
+
+        onProgress?.(status.progress || `Génération en cours... ${Math.round(elapsed / 1000)}s`);
       }
-
-      if (status.status === 'error') {
-        throw new Error(status.error || 'Erreur lors de la génération vidéo.');
-      }
-
-      onProgress?.(status.progress || `Génération en cours... ${Math.round(elapsed / 1000)}s`);
     } catch (e: any) {
-      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed')) throw e;
+      // Re-throw Veo errors, ignore network glitches
+      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed') && !e.message.includes('NetworkError')) {
+        throw e;
+      }
     }
+
+    await new Promise(r => setTimeout(r, pollInterval));
+    elapsed += pollInterval;
   }
 
   throw new Error('Timeout: la vidéo a pris trop de temps (8 min max).');
