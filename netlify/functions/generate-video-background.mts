@@ -1,14 +1,26 @@
 // ============================================================
 // Background Function: generate-video-background (15 min timeout)
-// 1. Reçoit juste le jobId (tiny body)
-// 2. Lit l'image + prompt depuis Netlify Blobs
-// 3. Appelle Veo predictLongRunning
-// 4. Poll jusqu'à terminaison
-// 5. Télécharge et stocke la vidéo dans Blobs
+// Called DIRECTLY by the client with just { jobId } (tiny body).
+// The -background suffix tells Netlify to run this async (202).
+// 1. Reads image + prompt from Netlify Blobs
+// 2. Calls Veo predictLongRunning
+// 3. Polls until done
+// 4. Downloads and stores the video in Blobs
 // ============================================================
 import { getStore } from "@netlify/blobs";
 
 export default async (request: Request) => {
+  // Handle CORS preflight
+  if (request.method === 'OPTIONS') {
+    return new Response('', {
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      },
+    });
+  }
+
   let jobId = '';
   let store: any;
 

@@ -150,7 +150,7 @@ export async function editImage(
   });
 }
 
-// --- Video Generation (async: sync launcher stores in Blobs, background processes) ---
+// --- Video Generation (2-step: sync stores payload, client triggers background) ---
 
 export async function generateVideo(
   imageBase64: string,
@@ -159,33 +159,56 @@ export async function generateVideo(
   quality: string,
   onProgress?: (msg: string) => void,
 ): Promise<{ videoBase64: string }> {
-  onProgress?.('Lancement de la génération vidéo...');
+  onProgress?.('Préparation du payload vidéo...');
 
-  // Step 1: Call sync function (stores image in Blobs + triggers background)
-  const launchRes = await fetch(`${API_BASE}/generate-video`, {
+  // Step 1: Store the large payload in Blobs via the sync function
+  const storeRes = await fetch(`${API_BASE}/generate-video`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ imageBase64, prompt, ratio, quality }),
   });
 
-  if (!launchRes.ok) {
-    const err = await launchRes.json().catch(() => ({ error: `HTTP ${launchRes.status}` }));
-    throw new Error(err.error || `Erreur lancement vidéo: ${launchRes.status}`);
+  if (!storeRes.ok) {
+    const err = await storeRes.json().catch(() => ({ error: `HTTP ${storeRes.status}` }));
+    throw new Error(err.error || `Erreur stockage vidéo: ${storeRes.status}`);
   }
 
-  const { jobId } = await launchRes.json();
+  const { jobId } = await storeRes.json();
   if (!jobId) throw new Error('Pas de jobId retourné.');
+
+  onProgress?.('Lancement de Veo en arrière-plan...');
+
+  // Step 2: Client triggers the background function DIRECTLY
+  // Netlify detects the -background suffix → returns 202 immediately
+  // and runs the function async for up to 15 minutes
+  try {
+    const bgRes = await fetch(`${API_BASE}/generate-video-background`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId }),
+    });
+    // 202 = background function accepted (expected)
+    // 200 = also OK (function might not be detected as background)
+    if (!bgRes.ok && bgRes.status !== 202) {
+      console.warn(`[generateVideo] BG trigger returned ${bgRes.status}, continuing with polling anyway...`);
+    } else {
+      console.log(`[generateVideo] BG function triggered OK (status ${bgRes.status})`);
+    }
+  } catch (triggerErr: any) {
+    // Even if the trigger fetch fails, the function might still be running
+    console.warn('[generateVideo] BG trigger fetch error (may still work):', triggerErr.message);
+  }
 
   onProgress?.('Veo traite votre vidéo...');
 
-  // Step 2: Poll video-status until done (max 8 min)
-  const maxPollTime = 480000;
-  const pollInterval = 6000;
+  // Step 3: Poll video-status until done (max 10 min)
+  const maxPollTime = 600000;
+  const pollInterval = 8000;
   let elapsed = 0;
 
-  // Wait 10s before first poll
-  await new Promise(r => setTimeout(r, 10000));
-  elapsed += 10000;
+  // Wait 15s before first poll (give BG function time to cold-start and begin)
+  await new Promise(r => setTimeout(r, 15000));
+  elapsed += 15000;
 
   while (elapsed < maxPollTime) {
     try {
@@ -202,19 +225,30 @@ export async function generateVideo(
           throw new Error(status.error || 'Erreur lors de la génération vidéo.');
         }
 
-        onProgress?.(status.progress || `Génération en cours... ${Math.round(elapsed / 1000)}s`);
+        // Show progress from the BG function
+        const progressText = status.progress || `Génération en cours... ${Math.round(elapsed / 1000)}s`;
+        onProgress?.(progressText);
+
+        // If we're still seeing "pending" with a payload after 30s,
+        // the BG function hasn't started yet — warn but keep polling
+        if (status.status === 'pending' && elapsed > 30000) {
+          onProgress?.(`Attente du démarrage Veo... ${Math.round(elapsed / 1000)}s`);
+        }
       }
     } catch (e: any) {
+      // Re-throw actual error messages from the API
       if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed') && !e.message.includes('NetworkError')) {
         throw e;
       }
+      // Network glitches during polling — keep trying
+      console.warn('[generateVideo] Poll network error, retrying...', e.message);
     }
 
     await new Promise(r => setTimeout(r, pollInterval));
     elapsed += pollInterval;
   }
 
-  throw new Error('Timeout: la vidéo a pris trop de temps (8 min max).');
+  throw new Error('Timeout: la vidéo a pris trop de temps (10 min max). Vérifiez les logs Netlify.');
 }
 
 // --- Text Generation (Slogans, Scene Suggestions) ---
