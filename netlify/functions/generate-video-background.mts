@@ -65,7 +65,7 @@ export default async (request: Request) => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instances: [instance], parameters: { aspectRatio } }),
+        body: JSON.stringify({ instances: [instance], parameters: { aspectRatio, generateAudio: false } }),
       },
     );
 

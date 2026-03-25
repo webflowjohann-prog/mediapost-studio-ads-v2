@@ -237,12 +237,19 @@ export async function generateVideo(
         }
       }
     } catch (e: any) {
-      // Re-throw actual error messages from the API
-      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed') && !e.message.includes('NetworkError')) {
+      // Re-throw actual error messages from the API (not network glitches)
+      const msg = e.message || '';
+      const isNetworkError = (
+        msg === 'Failed to fetch' ||
+        msg.includes('NetworkError') ||
+        msg.includes('net::ERR') ||
+        msg.includes('ECONNREFUSED')
+      );
+      if (!isNetworkError) {
         throw e;
       }
       // Network glitches during polling — keep trying
-      console.warn('[generateVideo] Poll network error, retrying...', e.message);
+      console.warn('[generateVideo] Poll network error, retrying...', msg);
     }
 
     await new Promise(r => setTimeout(r, pollInterval));
